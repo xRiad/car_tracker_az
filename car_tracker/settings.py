@@ -47,11 +47,20 @@ DOWNLOAD_HANDLERS = {
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 
 PLAYWRIGHT_LAUNCH_OPTIONS = {
-    "headless": False,
+    "headless": True,
     "args": [
         "--disable-blink-features=AutomationControlled",
         "--no-sandbox",
         "--disable-setuid-sandbox",
+        # "--disable-gpu",
+        "--window-position=-32000,-32000",
+        "--disable-notifications",
+        "--disable-infobars",
+        "--no-startup-window",          # ← Не показывать окно при запуске
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-field-trial-config"
     ]
 }
 
