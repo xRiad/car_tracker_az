@@ -10,6 +10,7 @@ class Database:
     """Обёртка для SQLite / PostgreSQL."""
     
     def __init__(self, db_type: str = "sqlite", connection_string: str = ""):
+        
         self.db_type = db_type
         self.connection_string = connection_string or "cars.db"
         self._conn = None
@@ -238,15 +239,15 @@ class Database:
     def save_filter(self, telegram_id: str, brand: str = None, model: str = None,
                     engine_volume: float = None, year_from: int = None,
                     year_to: int = None, price_from: float = None,
-                    price_to: float = None) -> None:
+                    price_to: float = None, min_discount: int = 5) -> None:
         """Сохраняет или обновляет фильтр пользователя."""
         self.conn.execute(
             """INSERT OR REPLACE INTO user_filters
-               (telegram_id, brand, model, engine_volume, year_from, year_to,
-                price_from, price_to, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (telegram_id, brand, model, engine_volume, year_from, year_to,
-             price_from, price_to, datetime.now().isoformat())
+                price_from, price_to, min_discount, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (telegram_id, brand, model, engine_volume, year_from, year_to,
+            price_from, price_to, min_discount, datetime.now().isoformat())
         )
     
     def get_filter(self, telegram_id: str) -> dict | None:
