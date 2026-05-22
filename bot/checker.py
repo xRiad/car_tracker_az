@@ -37,6 +37,7 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
             year=car["year"],
             engine_volume=car.get("engine_volume") or 0,
             price=car["price"],
+            city=car.get("city", ""),
         )
         
         if not filters:

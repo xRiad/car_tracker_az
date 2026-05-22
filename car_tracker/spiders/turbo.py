@@ -266,7 +266,13 @@ class TurboSpider(scrapy.Spider):
                         item["condition"] = value_text
         
         
-        price_text = response.css(".product-price::text").get()
+        # Все тексты из блока цены, берём первый с ₼
+        price_parts = response.css(".product-price .product-price__i::text").getall()
+        price_text = None
+        for p in price_parts:
+            if "₼" in p or "AZN" in p.upper():
+                price_text = p
+                break
         if not price_text:
             price_text = response.css("meta[property='og:price:amount']::attr(content)").get()
         if not price_text:

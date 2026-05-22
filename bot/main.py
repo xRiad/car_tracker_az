@@ -9,8 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, JobQueue
 from car_tracker.db import Database
-from bot.handlers import start, set_filter, my_filter, stop_filter
+from bot.handlers import start, set_filter, my_filter, stop_filter, handle_message
 from bot.checker import check_new_deals
+from telegram.ext import MessageHandler, filters
 
 db = Database()
 
@@ -25,6 +26,7 @@ def main():
     app.add_handler(CommandHandler("filter", set_filter))
     app.add_handler(CommandHandler("myfilter", my_filter))
     app.add_handler(CommandHandler("stopfilter", stop_filter))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Планировщик: проверка каждые 15 минут
     job_queue = app.job_queue
