@@ -10,7 +10,6 @@ class Database:
     """Обёртка для SQLite / PostgreSQL."""
     
     def __init__(self, db_type: str = "sqlite", connection_string: str = ""):
-        
         self.db_type = db_type
         self.connection_string = connection_string or "cars.db"
         self._conn = None
@@ -109,7 +108,17 @@ class Database:
                 year_to INTEGER,
                 price_from REAL,
                 price_to REAL,
+                min_discount INTEGER DEFAULT 10,
+                city TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS sent_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(telegram_id, external_id)
             );
         """)
     
@@ -239,15 +248,16 @@ class Database:
     def save_filter(self, telegram_id: str, brand: str = None, model: str = None,
                     engine_volume: float = None, year_from: int = None,
                     year_to: int = None, price_from: float = None,
-                    price_to: float = None, min_discount: int = 5) -> None:
+                    price_to: float = None, min_discount: int = 10,
+                    city: str = None) -> None:
         """Сохраняет или обновляет фильтр пользователя."""
         self.conn.execute(
             """INSERT OR REPLACE INTO user_filters
             (telegram_id, brand, model, engine_volume, year_from, year_to,
-                price_from, price_to, min_discount, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                price_from, price_to, min_discount, city, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (telegram_id, brand, model, engine_volume, year_from, year_to,
-            price_from, price_to, min_discount, datetime.now().isoformat())
+            price_from, price_to, min_discount, city, datetime.now().isoformat())
         )
     
     def get_filter(self, telegram_id: str) -> dict | None:
@@ -266,21 +276,43 @@ class Database:
         return cursor.rowcount > 0
     
     def get_matching_filters(self, brand: str, model: str, year: int,
-                              engine_volume: float, price: float) -> list[dict]:
+                              engine_volume: float, price: float,
+                              city: str = None) -> list[dict]:
         """Находит все фильтры подходящие под машину."""
-        cursor = self.conn.execute(
-            """SELECT * FROM user_filters
+        query = """SELECT * FROM user_filters
                WHERE (brand IS NULL OR LOWER(brand) = LOWER(?))
                AND (model IS NULL OR LOWER(model) = LOWER(?))
                AND (year_from IS NULL OR ? >= year_from)
                AND (year_to IS NULL OR ? <= year_to)
                AND (engine_volume IS NULL OR engine_volume = ?)
                AND (price_from IS NULL OR ? >= price_from)
-               AND (price_to IS NULL OR ? <= price_to)""",
-            (brand, model, year, year, engine_volume, price, price)
-        )
+               AND (price_to IS NULL OR ? <= price_to)"""
+        params = [brand, model, year, year, engine_volume, price, price]
+        
+        if city:
+            query += " AND (city IS NULL OR LOWER(city) LIKE '%' || LOWER(?) || '%')"
+            params.append(city)
+        
+        cursor = self.conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]
     
+    # ============ SENT NOTIFICATIONS ============
+    
+    def is_already_sent(self, telegram_id: str, external_id: str) -> bool:
+        """Проверяем, отправляли ли уже эту машину этому пользователю."""
+        cursor = self.conn.execute(
+            "SELECT 1 FROM sent_notifications WHERE telegram_id = ? AND external_id = ?",
+            (telegram_id, external_id)
+        )
+        return cursor.fetchone() is not None
+
+    def mark_as_sent(self, telegram_id: str, external_id: str) -> None:
+        """Помечаем что машина отправлена пользователю."""
+        self.conn.execute(
+            "INSERT OR IGNORE INTO sent_notifications (telegram_id, external_id) VALUES (?, ?)",
+            (telegram_id, external_id)
+        )
+
     def close(self):
         if self._conn:
             self._conn.close()

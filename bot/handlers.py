@@ -13,6 +13,7 @@ ALIASES = {
     "muherrik": "muherrik", "eng": "muherrik", "muh": "muherrik",
     "qiymet": "qiymet", "q": "qiymet", "p": "qiymet", "price": "qiymet",
     "endirim": "endirim", "end": "endirim",
+    "seher": "seher", "sh": "seher", "city": "seher",
 }
 
 
@@ -36,27 +37,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             engine_volume=None,
             year_from=None, year_to=None,
             price_from=None, price_to=None,
-            min_discount=5,
+            min_discount=10,
+            city="Bakı",
         )
 
     await update.message.reply_text(
         f"👋 Salam, {user.first_name}!\n\n"
         "Mən Turbo.az-da bazar qiymətindən ucuz maşınları tapıb sənə xəbər verirəm.\n\n"
         "🔔 *Siz artıq bütün sərfəli maşınlara abunə oldunuz!*\n"
-        "Heç bir filtr yoxdur — bazardan ucuz olan bütün maşınlar sizə gələcək.\n\n"
+        "Defolt olaraq Bakı üzrə bazardan 10% ucuz maşınlar sizə gələcək.\n\n"
         "📌 *Komandalar:*\n"
-        "/filter — filtr əlavə et (marka, model, il, qiymət, endirim)\n"
+        "/filter — filtr əlavə et (marka, model, il, qiymət, şəhər, endirim)\n"
         "/myfilter — filtrinizə bax\n"
-        "/stopfilter — filtri sil\n\n"
-        "*Açarlar:* `marka:`, `model:`, `il:`, `muherrik:`, `qiymet:`, `endirim:`\n"
+        "/stopfilter — filtri sıfırla\n\n"
+        "*Açarlar:* `marka:`, `model:`, `il:`, `muherrik:`, `qiymet:`, `seher:`, `endirim:`\n"
         "Hamısı könüllüdür — istədiyini seç.\n\n"
-        "*Nümunə:* `/filter marka:bmw model:x5 il:2019-2025 qiymet:0-50000 endirim:10`",
+        "*Nümunə:* `/filter marka:bmw model:x5 il:2019-2025 qiymet:0-50000 seher:baki endirim:10`",
         parse_mode="Markdown",
     )
 
 
 async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Установка фильтра: /filter marka:bmw model:x5 il:2019-2025 qiymet:0-50000 endirim:10"""
+    """Установка фильтра."""
     args = " ".join(context.args) if context.args else ""
 
     if not args.strip():
@@ -68,12 +70,13 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "`il:` — İl aralığı (2019-2025) və ya tək il (2020)\n"
             "`muherrik:` — Mühərrik həcmi, L (2.0, 1.5...)\n"
             "`qiymet:` — Qiymət aralığı (8000-50000, 0-30000, 10000-)\n"
-            "`endirim:` — Min. endirim faizi (5, 10, 15...)\n\n"
+            "`seher:` — Şəhər (baki, sumqayit, gence...) — defolt: Bakı\n"
+            "`endirim:` — Min. endirim faizi (5, 10, 15...) — defolt: 10\n\n"
             "*Nümunələr:*\n"
-            "`/filter marka:bmw model:x5 il:2019-2025 qiymet:0-50000 endirim:10`\n"
-            "`/filter il:2014-2026 muherrik:2.0 qiymet:8000-50000 endirim:15`\n"
-            "`/filter marka:toyota qiymet:0-30000`\n"
-            "`/filter endirim:20`",
+            "`/filter marka:bmw model:x5 il:2019-2025 qiymet:0-50000 seher:baki endirim:10`\n"
+            "`/filter il:2014-2026 muherrik:2.0 qiymet:8000-50000 seher:sumqayit`\n"
+            "`/filter marka:toyota qiymet:0-30000 endirim:15`\n"
+            "`/filter seher:gence endirim:20`",
             parse_mode="Markdown",
         )
         return
@@ -84,6 +87,7 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "muherrik": None,
         "qiymet_from": None, "qiymet_to": None,
         "min_discount": 10,
+        "seher": "Bakı",
     }
 
     parts = args.split()
@@ -126,6 +130,8 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 params["qiymet_to"] = float(value)
         elif key == "endirim":
             params["min_discount"] = int(value)
+        elif key == "seher":
+            params["seher"] = None if value == "-" else value
 
     if not any(params.values()):
         await update.message.reply_text("❌ Heç bir filtr seçilməyib.")
@@ -141,7 +147,8 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         year_to=params["il_to"],
         price_from=params["qiymet_from"],
         price_to=params["qiymet_to"],
-        min_discount=params.get("min_discount", 5),
+        min_discount=params.get("min_discount", 10),
+        city=params.get("seher"),
     )
 
     hisseler = []
@@ -156,7 +163,11 @@ async def set_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hisseler.append(f"*Qiymət:* {params['qiymet_from'] or '0'}–{params['qiymet_to'] or '∞'} AZN")
     else:
         hisseler.append(f"*Qiymət:* limitsiz")
-    hisseler.append(f"*Min. endirim:* {params.get('min_discount', 5)}%")
+    if params["seher"]:
+        hisseler.append(f"*Şəhər:* {params['seher']}")
+    else:
+        hisseler.append(f"*Şəhər:* hamısı")
+    hisseler.append(f"*Min. endirim:* {params.get('min_discount', 10)}%")
 
     await update.message.reply_text(
         "✅ *Filtr saxlanıldı!*\n\n" + "\n".join(hisseler) +
@@ -193,24 +204,27 @@ async def my_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         hisseler.append(f"*Qiymət:* {f.get('price_from') or '0'}–{f.get('price_to') or '∞'} AZN")
     else:
         hisseler.append(f"*Qiymət:* limitsiz")
+    if f.get("city"):
+        hisseler.append(f"*Şəhər:* {f['city']}")
+    else:
+        hisseler.append(f"*Şəhər:* hamısı")
     if f.get("min_discount"):
         hisseler.append(f"*Min. endirim:* {f['min_discount']}%")
 
     await update.message.reply_text(
         "📋 *Filtriniz:*\n\n" + "\n".join(hisseler) +
-        "\n\nℹ️ Silmək üçün: /stopfilter",
+        "\n\nℹ️ Sıfırlamaq üçün: /stopfilter",
         parse_mode="Markdown",
     )
 
 
 async def stop_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сбрасывает фильтр к дефолту (все машины, от 5%)."""
+    """Сбрасывает фильтр к дефолту (Bakı, от 10%)."""
     if not update.message:
         return
 
     telegram_id = str(update.effective_user.id)
-    
-    # Сбрасываем на дефолтный фильтр (всё, от 5%)
+
     db.save_filter(
         telegram_id=telegram_id,
         brand=None, model=None,
@@ -218,10 +232,11 @@ async def stop_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
         year_from=None, year_to=None,
         price_from=None, price_to=None,
         min_discount=10,
+        city="Bakı",
     )
 
     await update.message.reply_text(
         "🔄 *Filtr sıfırlandı.*\n"
-        "Yenidən bütün sərfəli maşınlar (min. 10% endirim) sizə gələcək.",
+        "Yenidən Bakı üzrə bütün sərfəli maşınlar (min. 10% endirim) sizə gələcək.",
         parse_mode="Markdown",
     )

@@ -63,6 +63,11 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
             min_disc = f.get("min_discount", 10)
             if discount < min_disc:
                 continue
+            
+            # Не отправляем повторно
+            if db.is_already_sent(f["telegram_id"], car["external_id"]):
+                continue
+            
             try:
                 text, keyboard = format_car_card(car, market, discount)
                 
@@ -83,5 +88,7 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
                         parse_mode="Markdown",
                     )
                 print(f"📤 Bildiriş göndərildi: {f['telegram_id']} → {car['brand']} {car['model']}")
+
+                db.mark_as_sent(f["telegram_id"], car["external_id"])
             except Exception as e:
                 print(f"❌ Göndərmə xətası {f['telegram_id']}: {e}")
