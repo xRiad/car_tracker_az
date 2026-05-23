@@ -270,9 +270,18 @@ class TurboSpider(scrapy.Spider):
         price_parts = response.css(".product-price .product-price__i::text").getall()
         price_text = None
         for p in price_parts:
-            if "₼" in p or "AZN" in p.upper():
-                price_text = p
+            p_clean = p.strip()
+            if ("₼" in p_clean or "AZN" in p_clean.upper()) and "≈" not in p_clean:
+                price_text = p_clean
                 break
+        
+        # Если не нашли без ≈ — берём первую с ₼ (с ≈)
+        if not price_text:
+            for p in price_parts:
+                if "₼" in p or "AZN" in p.upper():
+                    price_text = p.strip()
+                    break
+        
         if not price_text:
             price_text = response.css("meta[property='og:price:amount']::attr(content)").get()
         if not price_text:
@@ -431,7 +440,7 @@ class TurboSpider(scrapy.Spider):
         if not text:
             return 0.0, "AZN"
         
-        text_clean = text.replace("₼", "").replace("AZN", "").replace("USD", "").strip()
+        text_clean = text.replace("≈", "").replace("₼", "").replace("AZN", "").replace("USD", "").strip()
         try:
             price = float(text_clean.replace(" ", "").replace(",", "."))
         except ValueError:
@@ -440,6 +449,7 @@ class TurboSpider(scrapy.Spider):
         currency = "AZN"
         if "USD" in text or "$" in text:
             currency = "USD"
+            price = price * 1.70  # Конвертация в AZN
         
         return price, currency
 

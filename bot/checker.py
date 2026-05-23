@@ -54,6 +54,9 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
         if not market:
             continue
         
+        if market.get("total_listings", 0) < 8:
+            continue
+
         median = market["median_price"]
         if median == 0:
             continue
