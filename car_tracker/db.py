@@ -3,7 +3,7 @@
 import os
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 class Database:
@@ -90,11 +90,23 @@ class Database:
             
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id TEXT UNIQUE NOT NULL,
+                telegram_id TEXT UNIQUE,
+                phone TEXT,
                 username TEXT,
                 first_name TEXT,
-                is_premium INTEGER DEFAULT 0,
-                searches_today INTEGER DEFAULT 0,
+                role TEXT DEFAULT 'user',
+                is_activated INTEGER DEFAULT 0,
+                activated_at TIMESTAMP,
+                expires_at TIMESTAMP,
+                activated_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE TABLE IF NOT EXISTS partners (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_id TEXT UNIQUE NOT NULL,
+                activation_credits INTEGER DEFAULT 10,
+                activated_count INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             
@@ -110,6 +122,8 @@ class Database:
                 price_to REAL,
                 min_discount INTEGER DEFAULT 10,
                 city TEXT,
+                mileage_from INTEGER,
+                mileage_to INTEGER DEFAULT 250000,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -243,21 +257,122 @@ class Database:
         )
         return dict(cursor.fetchone())
     
+    def get_user_by_phone(self, phone: str) -> dict | None:
+        """Ищет пользователя по номеру телефона."""
+        cursor = self.conn.execute("SELECT * FROM users WHERE phone = ?", (phone,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    
+    def get_user_by_telegram(self, telegram_id: str) -> dict | None:
+        """Ищет пользователя по telegram_id."""
+        cursor = self.conn.execute(
+            "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    
+    def link_telegram_to_phone(self, telegram_id: str, phone: str,
+                                username: str = None, first_name: str = None):
+        """Привязывает telegram_id к записи по номеру, без дубликатов."""
+        blank = self.conn.execute(
+            "SELECT * FROM users WHERE phone=? AND telegram_id IS NULL", (phone,)
+        ).fetchone()
+        
+        existing_tg = self.conn.execute(
+            "SELECT * FROM users WHERE telegram_id=?", (telegram_id,)
+        ).fetchone()
+        
+        if blank and existing_tg:
+            # Копируем активацию из болванки в существующую запись
+            if blank["is_activated"]:
+                self.conn.execute(
+                    "UPDATE users SET is_activated=1, activated_at=?, expires_at=?, activated_by=?, phone=?, username=?, first_name=? WHERE telegram_id=?",
+                    (blank["activated_at"], blank["expires_at"], blank["activated_by"], phone, username, first_name, telegram_id)
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE users SET phone=?, username=?, first_name=? WHERE telegram_id=?",
+                    (phone, username, first_name, telegram_id)
+                )
+            # Удаляем болванку
+            self.conn.execute("DELETE FROM users WHERE id=?", (blank["id"],))
+        elif blank:
+            self.conn.execute(
+                "UPDATE users SET telegram_id=?, username=?, first_name=? WHERE id=?",
+                (telegram_id, username, first_name, blank["id"])
+            )
+        elif existing_tg:
+            self.conn.execute(
+                "UPDATE users SET phone=?, username=?, first_name=? WHERE telegram_id=?",
+                (phone, username, first_name, telegram_id)
+            )
+        else:
+            self.conn.execute(
+                """INSERT INTO users (telegram_id, phone, username, first_name)
+                VALUES (?, ?, ?, ?)""",
+                (telegram_id, phone, username, first_name)
+            )
+    
+    def activate_user(self, phone: str, days: int, activated_by: str) -> None:
+        """Активирует пользователя по номеру телефона на N дней. Если записи нет — создаёт болванку."""
+        now = datetime.now()
+        expires = now + timedelta(days=days)
+        cursor = self.conn.execute(
+            """UPDATE users SET is_activated=1, activated_at=?, expires_at=?, activated_by=?
+               WHERE phone=?""",
+            (now.isoformat(), expires.isoformat(), activated_by, phone)
+        )
+        if cursor.rowcount == 0:
+            self.conn.execute(
+                """INSERT INTO users (phone, is_activated, activated_at, expires_at, activated_by)
+                   VALUES (?, 1, ?, ?, ?)""",
+                (phone, now.isoformat(), expires.isoformat(), activated_by)
+            )
+    
+    def get_expiring_users(self, days: int = 3) -> list[dict]:
+        """Пользователи у которых доступ истекает через N дней."""
+        cursor = self.conn.execute(
+            """SELECT * FROM users WHERE is_activated=1 
+               AND expires_at BETWEEN datetime('now') AND datetime('now', ?)""",
+            (f"+{days} days",)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    
+    # ============ PARTNERS ============
+    
+    def get_partner(self, telegram_id: str) -> dict | None:
+        """Получает данные партнёра."""
+        cursor = self.conn.execute(
+            "SELECT * FROM partners WHERE telegram_id=?", (telegram_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    
+    def decrement_credits(self, telegram_id: str) -> None:
+        """Уменьшает кредиты партнёра на 1."""
+        self.conn.execute(
+            """UPDATE partners SET activation_credits=activation_credits-1, 
+               activated_count=activated_count+1 WHERE telegram_id=?""",
+            (telegram_id,)
+        )
+    
     # ============ USER FILTERS ============
     
     def save_filter(self, telegram_id: str, brand: str = None, model: str = None,
                     engine_volume: float = None, year_from: int = None,
                     year_to: int = None, price_from: float = None,
                     price_to: float = None, min_discount: int = 10,
-                    city: str = None) -> None:
+                    city: str = None, mileage_from: int = None,
+                    mileage_to: int = 250000) -> None:
         """Сохраняет или обновляет фильтр пользователя."""
         self.conn.execute(
             """INSERT OR REPLACE INTO user_filters
             (telegram_id, brand, model, engine_volume, year_from, year_to,
-                price_from, price_to, min_discount, city, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                price_from, price_to, min_discount, city, mileage_from, mileage_to, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (telegram_id, brand, model, engine_volume, year_from, year_to,
-            price_from, price_to, min_discount, city, datetime.now().isoformat())
+            price_from, price_to, min_discount, city, mileage_from, mileage_to,
+            datetime.now().isoformat())
         )
     
     def get_filter(self, telegram_id: str) -> dict | None:
@@ -277,7 +392,7 @@ class Database:
     
     def get_matching_filters(self, brand: str, model: str, year: int,
                               engine_volume: float, price: float,
-                              city: str = None) -> list[dict]:
+                              city: str = None, mileage: int = None) -> list[dict]:
         """Находит все фильтры подходящие под машину."""
         query = """SELECT * FROM user_filters
                WHERE (brand IS NULL OR LOWER(brand) = LOWER(?))
@@ -292,6 +407,12 @@ class Database:
         if city:
             query += " AND (city IS NULL OR LOWER(city) LIKE '%' || LOWER(?) || '%')"
             params.append(city)
+        
+        if mileage is not None:
+            query += " AND (mileage_from IS NULL OR ? >= mileage_from)"
+            params.append(mileage)
+            query += " AND (mileage_to IS NULL OR ? <= mileage_to)"
+            params.append(mileage)
         
         cursor = self.conn.execute(query, params)
         return [dict(row) for row in cursor.fetchall()]

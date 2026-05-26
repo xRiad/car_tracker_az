@@ -12,6 +12,9 @@ db = Database()
 
 CURRENT_YEAR = datetime.now().year
 
+ADMIN_PHONE = "0556693707"
+ADMIN_TELEGRAM_ID = None
+
 CITIES = [
     "Ağcabədi", "Ağdam", "Ağdaş", "Ağstafa", "Ağsu", "Astara", "Babək",
     "Bakı", "Balakən", "Beyləqan", "Bərdə", "Biləsuvar", "Cəbrayıl",
@@ -31,8 +34,18 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup([
     ["📋 Filtrim"]
 ], resize_keyboard=True)
 
+MAIN_KEYBOARD_ADMIN = ReplyKeyboardMarkup([
+    ["🔍 Axtar", "⚙️ Filtrlər"],
+    ["📋 Filtrim", "🔑 Aktiv et"]
+], resize_keyboard=True)
+
+MAIN_KEYBOARD_PARTNER = ReplyKeyboardMarkup([
+    ["🔍 Axtar", "⚙️ Filtrlər"],
+    ["📋 Filtrim", "🔑 Aktiv et"]
+], resize_keyboard=True)
+
 FILTER_KEYBOARD = ReplyKeyboardMarkup([
-    ["📉 Endirim faizi", "📍 Şəhər", "💸 Qiymət"],
+    ["📉 Endirim faizi", "📍 Şəhər", "💸 Qiymət", "🛣 Yürüş"],
     ["🔄 Sıfırla", "🔙 Geri"]
 ], resize_keyboard=True)
 
@@ -43,6 +56,10 @@ DISCOUNT_KEYBOARD = ReplyKeyboardMarkup([
 
 PRICE_KEYBOARD = ReplyKeyboardMarkup([
     ["💰 Qiymətsiz", "🔙 Geri"]
+], resize_keyboard=True)
+
+MILEAGE_KEYBOARD = ReplyKeyboardMarkup([
+    ["🛣 Limitsiz", "🔙 Geri"]
 ], resize_keyboard=True)
 
 
@@ -147,6 +164,16 @@ def format_filter_text(f: dict) -> str:
 
     lines.append(f"📉 *{f.get('min_discount', 14)}% bazardan aşağı*")
     lines.append(f"📍 *{f.get('city') or 'Bakı'}*")
+
+    mi_from = f.get("mileage_from")
+    mi_to = f.get("mileage_to")
+    if mi_from or mi_to:
+        from_str = f"{mi_from:,}" if mi_from else "0"
+        to_str = f"{mi_to:,}" if mi_to else "∞"
+        lines.append(f"🛣 *{from_str}–{to_str} km*")
+    else:
+        lines.append("🛣 *Limitsiz*")
+
     return "\n".join(lines)
 
 
@@ -161,9 +188,24 @@ def get_user_filter(telegram_id: str) -> dict:
             price_from=None, price_to=None,
             min_discount=14,
             city="Bakı",
+            mileage_to=250000,
         )
         f = db.get_filter(telegram_id)
     return f
+
+
+def get_main_keyboard(telegram_id: str):
+    user = db.get_user_by_telegram(telegram_id)
+    if user and user.get("role") == "admin":
+        return MAIN_KEYBOARD_ADMIN
+    if user and user.get("role") == "partner":
+        return MAIN_KEYBOARD_PARTNER
+    return MAIN_KEYBOARD
+
+
+def is_admin_or_partner(telegram_id: str) -> bool:
+    user = db.get_user_by_telegram(telegram_id)
+    return user and user.get("role") in ("admin", "partner")
 
 
 # ============ ОБРАБОТЧИКИ ============
@@ -173,20 +215,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.effective_user
+    telegram_id = str(user.id)
+
     db.get_or_create_user(
-        telegram_id=str(user.id),
+        telegram_id=telegram_id,
         username=user.username,
         first_name=user.first_name,
     )
-    get_user_filter(str(user.id))
 
+    existing = db.get_user_by_telegram(telegram_id)
+    if existing and existing.get("phone") == ADMIN_PHONE:
+        db.conn.execute("UPDATE users SET role='admin' WHERE telegram_id=?", (telegram_id,))
+
+    existing = db.get_user_by_telegram(telegram_id)
+
+    if existing and existing.get("is_activated") and existing.get("expires_at"):
+        try:
+            expires = datetime.fromisoformat(existing["expires_at"])
+            if expires > datetime.now():
+                get_user_filter(telegram_id)
+                kb = get_main_keyboard(telegram_id)
+                await update.message.reply_text(
+                    f"👋 Yenidən salam, {user.first_name}!\n"
+                    f"✅ Aktivdir. Bitmə: *{expires.strftime('%d.%m.%Y')}*",
+                    parse_mode="Markdown",
+                    reply_markup=kb,
+                )
+                return
+        except (ValueError, TypeError):
+            pass
+
+    if existing and existing.get("phone") and not existing.get("is_activated"):
+        await update.message.reply_text(
+            "❌ Nömrəniz aktiv deyil. Adminlə əlaqə saxlayın.",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+
+    keyboard = ReplyKeyboardMarkup([
+        [{"text": "📱 Nömrəmi paylaş", "request_contact": True}]
+    ], resize_keyboard=True, one_time_keyboard=True)
     await update.message.reply_text(
-        f"👋 Salam, {user.first_name}!\n\n"
-        "Mən Turbo.az-da bazardan ucuz maşınları tapıb sənə xəbər verirəm.\n\n"
-        "Defolt olaraq *Bakı* üzrə *14% endirimli* maşınlar sizə gələcək.\n\n"
-        "Nə etmək istəyirsən?",
-        parse_mode="Markdown",
-        reply_markup=MAIN_KEYBOARD,
+        "Proqramı istifadə etmək üçün nömrənizi paylaşın.",
+        reply_markup=keyboard,
     )
 
 
@@ -194,8 +265,118 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    text = update.message.text.strip()
     telegram_id = str(update.effective_user.id)
+    user_obj = update.effective_user
+
+    # --- Получение контакта ---
+    if update.message.contact:
+        phone = update.message.contact.phone_number
+        if phone.startswith("+994"):
+            phone = phone[4:]
+        elif phone.startswith("994"):
+            phone = phone[3:]
+
+        # Используем link_telegram_to_phone вместо update_phone_for_telegram
+        db.link_telegram_to_phone(
+            telegram_id=telegram_id,
+            phone=phone,
+            username=user_obj.username,
+            first_name=user_obj.first_name,
+        )
+
+        if phone == ADMIN_PHONE:
+            db.conn.execute("UPDATE users SET role='admin' WHERE telegram_id=?", (telegram_id,))
+
+        # Проверяем активацию
+        existing = db.get_user_by_telegram(telegram_id)
+        if not existing:
+            existing = db.get_user_by_phone(phone)
+
+        if existing and existing.get("is_activated") and existing.get("expires_at"):
+            try:
+                expires = datetime.fromisoformat(existing["expires_at"])
+                if expires > datetime.now():
+                    # Подтягиваем активацию если она ещё не в telegram_id записи
+                    if not db.get_user_by_telegram(telegram_id).get("is_activated"):
+                        db.conn.execute(
+                            "UPDATE users SET is_activated=1, activated_at=?, expires_at=?, activated_by=? WHERE telegram_id=?",
+                            (existing["activated_at"], existing["expires_at"], existing["activated_by"], telegram_id)
+                        )
+                    get_user_filter(telegram_id)
+                    kb = get_main_keyboard(telegram_id)
+                    await update.message.reply_text(
+                        f"✅ Nömrəniz aktivdir! Bitmə: *{expires.strftime('%d.%m.%Y')}*",
+                        parse_mode="Markdown",
+                        reply_markup=kb,
+                    )
+                    return
+            except (ValueError, TypeError):
+                pass
+            await update.message.reply_text(
+                "❌ Müddət bitib. Adminlə əlaqə saxlayın.",
+                reply_markup=MAIN_KEYBOARD,
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Nömrəniz aktiv deyil. Adminlə əlaqə saxlayın.",
+                reply_markup=MAIN_KEYBOARD,
+            )
+        return
+
+    text = update.message.text.strip()
+
+    # Проверка активации
+    user = db.get_user_by_telegram(telegram_id)
+    if not user:
+        await update.message.reply_text(
+            "❌ Xəta baş verdi. /start yazın.",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+
+    if not user.get("is_activated") and user.get("phone"):
+        phone_user = db.get_user_by_phone(user["phone"])
+        if phone_user and phone_user.get("is_activated"):
+            db.conn.execute(
+                "UPDATE users SET is_activated=1, activated_at=?, expires_at=?, activated_by=? WHERE telegram_id=?",
+                (phone_user.get("activated_at"), phone_user.get("expires_at"), phone_user.get("activated_by"), telegram_id)
+            )
+            user = db.get_user_by_telegram(telegram_id)
+
+    if not user.get("is_activated"):
+        if not is_admin_or_partner(telegram_id):
+            await update.message.reply_text(
+                "❌ Proqram aktiv deyil. Nömrənizi paylaşmaq üçün /start yazın.",
+                reply_markup=MAIN_KEYBOARD,
+            )
+            return
+
+    # --- Активация (админ / партнёр) ---
+    parts = text.split()
+    if is_admin_or_partner(telegram_id) and len(parts) == 2 and parts[1].isdigit() and len(parts[0]) >= 7:
+        phone = parts[0]
+        if phone.startswith("0"):
+            phone = phone[1:]
+        days = int(parts[1])
+
+        if user.get("role") == "partner":
+            partner = db.get_partner(telegram_id)
+            if not partner or partner.get("activation_credits", 0) <= 0:
+                await update.message.reply_text(
+                    "❌ Kreditiniz bitib. Adminlə əlaqə saxlayın: @L33TeBoy",
+                    reply_markup=get_main_keyboard(telegram_id),
+                )
+                return
+
+        db.activate_user(phone, days, telegram_id)
+        if user.get("role") == "partner":
+            db.decrement_credits(telegram_id)
+
+        await update.message.reply_text(
+            f"✅ {phone} aktiv edildi ({days} gün)",
+            reply_markup=get_main_keyboard(telegram_id),
+        )
+        return
 
     # --- Режим ожидания минимальной цены ---
     if context.user_data.get("awaiting_price_from"):
@@ -275,17 +456,79 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             price_to=context.user_data.get("price_to"),
             min_discount=f.get("min_discount", 14),
             city=f.get("city"),
+            mileage_from=f.get("mileage_from"),
+            mileage_to=f.get("mileage_to", 250000),
         )
         context.user_data["awaiting_price_to"] = False
-        context.user_data["price_from"] = None
-        context.user_data["price_to"] = None
         f = get_user_filter(telegram_id)
         await update.message.reply_text(
             "✅ Qiymət yeniləndi!\n\n" + format_filter_text(f),
             parse_mode="Markdown",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=get_main_keyboard(telegram_id),
         )
         return
+
+    # --- Режим ожидания пробега ---
+    if context.user_data.get("awaiting_mileage"):
+        context.user_data["awaiting_mileage"] = False
+        if text == "🛣 Limitsiz":
+            f = get_user_filter(telegram_id)
+            db.save_filter(
+                telegram_id=telegram_id,
+                brand=f.get("brand"), model=f.get("model"),
+                engine_volume=f.get("engine_volume"),
+                year_from=f.get("year_from"), year_to=f.get("year_to"),
+                price_from=f.get("price_from"), price_to=f.get("price_to"),
+                min_discount=f.get("min_discount", 14),
+                city=f.get("city"),
+                mileage_from=None,
+                mileage_to=None,
+            )
+            f = get_user_filter(telegram_id)
+            await update.message.reply_text(
+                "✅ Yürüş limiti silindi!\n\n" + format_filter_text(f),
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard(telegram_id),
+            )
+            return
+        elif text == "🔙 Geri":
+            f = get_user_filter(telegram_id)
+            await update.message.reply_text(
+                format_filter_text(f) + "\n\nNəyi dəyişmək istəyirsən?",
+                parse_mode="Markdown",
+                reply_markup=FILTER_KEYBOARD,
+            )
+            return
+        else:
+            try:
+                km = int(text.replace(" ", "").replace("k", "").replace("m", ""))
+                if km < 0 or km > 2_000_000:
+                    raise ValueError
+                f = get_user_filter(telegram_id)
+                db.save_filter(
+                    telegram_id=telegram_id,
+                    brand=f.get("brand"), model=f.get("model"),
+                    engine_volume=f.get("engine_volume"),
+                    year_from=f.get("year_from"), year_to=f.get("year_to"),
+                    price_from=f.get("price_from"), price_to=f.get("price_to"),
+                    min_discount=f.get("min_discount", 14),
+                    city=f.get("city"),
+                    mileage_from=0,
+                    mileage_to=km,
+                )
+                f = get_user_filter(telegram_id)
+                await update.message.reply_text(
+                    f"✅ Yürüş limiti: *{km:,} km*\n\n" + format_filter_text(f),
+                    parse_mode="Markdown",
+                    reply_markup=get_main_keyboard(telegram_id),
+                )
+                return
+            except ValueError:
+                await update.message.reply_text(
+                    "❌ Düzgün yürüş yazın. Məsələn: 150000",
+                    reply_markup=MILEAGE_KEYBOARD,
+                )
+                return
 
     # --- Режим ожидания города ---
     if context.user_data.get("awaiting_city"):
@@ -309,24 +552,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price_from=f.get("price_from"), price_to=f.get("price_to"),
                 min_discount=f.get("min_discount", 14),
                 city=city,
+                mileage_from=f.get("mileage_from"),
+                mileage_to=f.get("mileage_to", 250000),
             )
             f = get_user_filter(telegram_id)
             await update.message.reply_text(
                 f"✅ Şəhər yeniləndi: *{city}*\n\n" + format_filter_text(f),
                 parse_mode="Markdown",
-                reply_markup=MAIN_KEYBOARD,
+                reply_markup=get_main_keyboard(telegram_id),
             )
         else:
             await update.message.reply_text(
                 "❌ Şəhəri anlaya bilmədim. Yenidən yaz.",
-                reply_markup=MAIN_KEYBOARD,
+                reply_markup=get_main_keyboard(telegram_id),
             )
         return
 
     # --- Режим поиска ---
     if context.user_data.get("awaiting_search"):
         context.user_data["awaiting_search"] = False
-        if text in {"🔙 Geri", "📋 Filtrim", "⚙️ Filtrlər", "🔍 Axtar"}:
+        if text in {"🔙 Geri", "📋 Filtrim", "⚙️ Filtrlər", "🔍 Axtar", "🔑 Aktiv et"}:
             pass
         else:
             parsed = parse_search_query(text)
@@ -334,7 +579,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     "❌ Heç nə anlaya bilmədim.\nNümunə: `toyota prius 2018`",
                     parse_mode="Markdown",
-                    reply_markup=MAIN_KEYBOARD,
+                    reply_markup=get_main_keyboard(telegram_id),
                 )
                 return
 
@@ -348,7 +593,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"❌ \"{parsed['brand']}\" markasını anlaya bilmədim.\n"
                     "Məsələn: `toyota prius 2018`",
                     parse_mode="Markdown",
-                    reply_markup=MAIN_KEYBOARD,
+                    reply_markup=get_main_keyboard(telegram_id),
                 )
                 return
 
@@ -372,6 +617,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     # --- Навигация ---
+    kb = get_main_keyboard(telegram_id)
+
+    if text == "🔑 Aktiv et" and is_admin_or_partner(telegram_id):
+        await update.message.reply_text(
+            "Nömrə və gün sayını yazın.\nMəsələn: `0556693707 30`",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        return
+
     if text == "🔍 Axtar":
         await update.message.reply_text(
             "Maşını təsvir et.\nNümunə: `toyota prius 2018`\nSadəcə `2018` də yaza bilərsən.",
@@ -394,7 +649,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             format_filter_text(f),
             parse_mode="Markdown",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=kb,
         )
         return
 
@@ -413,12 +668,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             price_from=f.get("price_from"), price_to=f.get("price_to"),
             min_discount=discount,
             city=f.get("city"),
+            mileage_from=f.get("mileage_from"),
+            mileage_to=f.get("mileage_to", 250000),
         )
         f = get_user_filter(telegram_id)
         await update.message.reply_text(
             "✅ Yeniləndi!\n\n" + format_filter_text(f),
             parse_mode="Markdown",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=kb,
         )
         return
 
@@ -445,6 +702,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_price_from"] = True
         return
 
+    elif text == "🛣 Yürüş":
+        f = get_user_filter(telegram_id)
+        current = ""
+        if f.get("mileage_to"):
+            current = f"\nHal-hazırda: max *{f['mileage_to']:,} km*"
+        await update.message.reply_text(
+            f"Maximum yürüşü yazın (km):{current}\n\nMəsələn: 150000",
+            parse_mode="Markdown",
+            reply_markup=MILEAGE_KEYBOARD,
+        )
+        context.user_data["awaiting_mileage"] = True
+        return
+
     elif text == "🔄 Sıfırla":
         db.save_filter(
             telegram_id=telegram_id,
@@ -454,12 +724,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             price_from=None, price_to=None,
             min_discount=14,
             city="Bakı",
+            mileage_to=250000,
         )
         f = get_user_filter(telegram_id)
         await update.message.reply_text(
             "🔄 Filtr sıfırlandı!\n\n" + format_filter_text(f),
             parse_mode="Markdown",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=kb,
         )
         return
 
@@ -468,7 +739,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             format_filter_text(f),
             parse_mode="Markdown",
-            reply_markup=MAIN_KEYBOARD,
+            reply_markup=kb,
         )
         return
 
@@ -487,13 +758,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price_to=f.get("price_to"),
                 min_discount=f.get("min_discount", 14),
                 city=f.get("city"),
+                mileage_from=f.get("mileage_from"),
+                mileage_to=f.get("mileage_to", 250000),
             )
             context.user_data["temp_filter"] = {}
             f = get_user_filter(telegram_id)
             await update.message.reply_text(
                 "✅ Filtr yeniləndi!\n\n" + format_filter_text(f),
                 parse_mode="Markdown",
-                reply_markup=MAIN_KEYBOARD,
+                reply_markup=kb,
             )
         return
 
@@ -504,7 +777,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "Başa düşmədim. Zəhmət olmasa düymələrdən istifadə et.",
-        reply_markup=MAIN_KEYBOARD,
+        reply_markup=kb,
     )
 
 
