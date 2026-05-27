@@ -45,14 +45,15 @@ MAIN_KEYBOARD_PARTNER = ReplyKeyboardMarkup([
 ], resize_keyboard=True)
 
 FILTER_KEYBOARD = ReplyKeyboardMarkup([
-    ["📉 Endirim faizi", "📍 Şəhər", "💸 Qiymət", "🛣 Yürüş"],
+    ["📍 Şəhər", "💸 Qiymət", "🛣 Yürüş"],
     ["🔄 Sıfırla", "🔙 Geri"]
 ], resize_keyboard=True)
 
-DISCOUNT_KEYBOARD = ReplyKeyboardMarkup([
-    ["14%", "20%"],
-    ["🔙 Geri"]
-], resize_keyboard=True)
+# Закомментировано — может пригодиться в будущем
+# DISCOUNT_KEYBOARD = ReplyKeyboardMarkup([
+#     ["14%", "20%"],
+#     ["🔙 Geri"]
+# ], resize_keyboard=True)
 
 PRICE_KEYBOARD = ReplyKeyboardMarkup([
     ["💰 Qiymətsiz", "🔙 Geri"]
@@ -162,7 +163,6 @@ def format_filter_text(f: dict) -> str:
         to_str = f"{price_to:,.0f}" if price_to else "∞"
         lines.append(f"💸 *{from_str}-dən {to_str}-dək AZN*")
 
-    lines.append(f"📉 *{f.get('min_discount', 14)}% bazardan aşağı*")
     lines.append(f"📍 *{f.get('city') or 'Bakı'}*")
 
     mi_from = f.get("mileage_from")
@@ -186,7 +186,7 @@ def get_user_filter(telegram_id: str) -> dict:
             engine_volume=None,
             year_from=None, year_to=None,
             price_from=None, price_to=None,
-            min_discount=14,
+            min_discount=10,
             city="Bakı",
             mileage_to=250000,
         )
@@ -276,7 +276,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif phone.startswith("994"):
             phone = phone[3:]
 
-        # Используем link_telegram_to_phone вместо update_phone_for_telegram
         db.link_telegram_to_phone(
             telegram_id=telegram_id,
             phone=phone,
@@ -287,7 +286,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if phone == ADMIN_PHONE:
             db.conn.execute("UPDATE users SET role='admin' WHERE telegram_id=?", (telegram_id,))
 
-        # Проверяем активацию
         existing = db.get_user_by_telegram(telegram_id)
         if not existing:
             existing = db.get_user_by_phone(phone)
@@ -296,7 +294,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 expires = datetime.fromisoformat(existing["expires_at"])
                 if expires > datetime.now():
-                    # Подтягиваем активацию если она ещё не в telegram_id записи
                     if not db.get_user_by_telegram(telegram_id).get("is_activated"):
                         db.conn.execute(
                             "UPDATE users SET is_activated=1, activated_at=?, expires_at=?, activated_by=? WHERE telegram_id=?",
@@ -454,7 +451,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             year_from=f.get("year_from"), year_to=f.get("year_to"),
             price_from=context.user_data.get("price_from"),
             price_to=context.user_data.get("price_to"),
-            min_discount=f.get("min_discount", 14),
+            min_discount=f.get("min_discount", 10),
             city=f.get("city"),
             mileage_from=f.get("mileage_from"),
             mileage_to=f.get("mileage_to", 250000),
@@ -479,7 +476,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 engine_volume=f.get("engine_volume"),
                 year_from=f.get("year_from"), year_to=f.get("year_to"),
                 price_from=f.get("price_from"), price_to=f.get("price_to"),
-                min_discount=f.get("min_discount", 14),
+                min_discount=f.get("min_discount", 10),
                 city=f.get("city"),
                 mileage_from=None,
                 mileage_to=None,
@@ -511,7 +508,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     engine_volume=f.get("engine_volume"),
                     year_from=f.get("year_from"), year_to=f.get("year_to"),
                     price_from=f.get("price_from"), price_to=f.get("price_to"),
-                    min_discount=f.get("min_discount", 14),
+                    min_discount=f.get("min_discount", 10),
                     city=f.get("city"),
                     mileage_from=0,
                     mileage_to=km,
@@ -550,7 +547,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 engine_volume=f.get("engine_volume"),
                 year_from=f.get("year_from"), year_to=f.get("year_to"),
                 price_from=f.get("price_from"), price_to=f.get("price_to"),
-                min_discount=f.get("min_discount", 14),
+                min_discount=f.get("min_discount", 10),
                 city=city,
                 mileage_from=f.get("mileage_from"),
                 mileage_to=f.get("mileage_to", 250000),
@@ -653,32 +650,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    elif text == "📉 Endirim faizi":
-        await update.message.reply_text("Nə qədər endirim istəyirsən?", reply_markup=DISCOUNT_KEYBOARD)
-        return
-
-    elif text in ["14%", "20%"]:
-        discount = int(text.replace("%", ""))
-        f = get_user_filter(telegram_id)
-        db.save_filter(
-            telegram_id=telegram_id,
-            brand=f.get("brand"), model=f.get("model"),
-            engine_volume=f.get("engine_volume"),
-            year_from=f.get("year_from"), year_to=f.get("year_to"),
-            price_from=f.get("price_from"), price_to=f.get("price_to"),
-            min_discount=discount,
-            city=f.get("city"),
-            mileage_from=f.get("mileage_from"),
-            mileage_to=f.get("mileage_to", 250000),
-        )
-        f = get_user_filter(telegram_id)
-        await update.message.reply_text(
-            "✅ Yeniləndi!\n\n" + format_filter_text(f),
-            parse_mode="Markdown",
-            reply_markup=kb,
-        )
-        return
-
     elif text == "📍 Şəhər":
         await update.message.reply_text(
             "Şəhəri yazın.\nMəsələn: Bakı, Gəncə, Sumqayıt, Naxçıvan...",
@@ -722,7 +693,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             engine_volume=None,
             year_from=None, year_to=None,
             price_from=None, price_to=None,
-            min_discount=14,
+            min_discount=10,
             city="Bakı",
             mileage_to=250000,
         )
@@ -756,7 +727,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 year_to=parsed.get("year_to"),
                 price_from=f.get("price_from"),
                 price_to=f.get("price_to"),
-                min_discount=f.get("min_discount", 14),
+                min_discount=f.get("min_discount", 10),
                 city=f.get("city"),
                 mileage_from=f.get("mileage_from"),
                 mileage_to=f.get("mileage_to", 250000),

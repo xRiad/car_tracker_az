@@ -5,10 +5,23 @@ from datetime import datetime
 from telegram.ext import ContextTypes
 from car_tracker.db import Database
 from bot.card import format_car_card
+from bot.config import FREQUENCY_DISCOUNT, FREQUENCY_DAYS
 
 db = Database()
 
 last_check = datetime.now()
+
+
+def get_min_discount_for_model(brand: str, model: str, year: int,
+                                engine_volume: float, fuel_type: str) -> int:
+    """Возвращает минимальный порог скидки на основе частоты модели."""
+    freq = db.get_daily_frequency(brand, model, year, engine_volume, fuel_type)
+    
+    for threshold, discount in FREQUENCY_DISCOUNT:
+        if freq >= threshold:
+            return discount
+    
+    return FREQUENCY_DISCOUNT[-1][1]
 
 
 async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
@@ -79,6 +92,7 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
         if not market:
             continue
         
+        # Минимум 8 машин для надёжной статистики
         if market.get("total_listings", 0) < 8:
             continue
 
@@ -88,18 +102,28 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
         
         discount = (median - car["price"]) / median * 100
         
+        # Динамический порог скидки на основе частоты модели
+        model_min_discount = get_min_discount_for_model(
+            brand=car["brand"],
+            model=car["model"],
+            year=car["year"],
+            engine_volume=car.get("engine_volume") or 0,
+            fuel_type=car.get("fuel_type") or "",
+        )
+        
         for f in filters:
-            # Проверяем что пользователь активирован
             user = db.get_user_by_telegram(f["telegram_id"])
             if not user or not user.get("is_activated"):
                 continue
             if user.get("expires_at"):
                 expires = datetime.fromisoformat(user["expires_at"])
                 if expires <= now:
-                    continue  # Доступ истёк
+                    continue
             
-            min_disc = f.get("min_discount", 10)
-            if discount < min_disc:
+            user_min_disc = f.get("min_discount", 10)
+            effective_min = max(user_min_disc, model_min_discount) if model_min_discount > 0 else user_min_disc
+            
+            if discount < effective_min:
                 continue
             
             if db.is_already_sent(f["telegram_id"], car["external_id"]):
