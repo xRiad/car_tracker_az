@@ -41,8 +41,9 @@ def format_car_card(car: dict, market: dict, discount: float) -> tuple[str, Inli
     if car.get("condition"):
         text += f"✅ *Vəziyyət:* {car['condition']}\n"
     
+    site_name = "Turbo.az" if car.get("source") == "turbo.az" else "Tap.az"
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 Turbo.az-da bax", url=car['url'])]
+        [InlineKeyboardButton(f"🔗 {site_name}-da bax", url=car['url'])]
     ])
     
     return text, keyboard
