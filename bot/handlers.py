@@ -7,8 +7,10 @@ from difflib import SequenceMatcher
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ContextTypes
 from car_tracker.db import Database
+from bot.logger import NotificationLogger
 
 db = Database()
+log = NotificationLogger()
 
 CURRENT_YEAR = datetime.now().year
 
@@ -36,12 +38,14 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup([
 
 MAIN_KEYBOARD_ADMIN = ReplyKeyboardMarkup([
     ["🔍 Axtar", "⚙️ Filtrlər"],
-    ["📋 Filtrim", "🔑 Aktiv et"]
+    ["📋 Filtrim", "🔑 Aktiv et"],
+    ["📊 Loglar"]
 ], resize_keyboard=True)
 
 MAIN_KEYBOARD_PARTNER = ReplyKeyboardMarkup([
     ["🔍 Axtar", "⚙️ Filtrlər"],
-    ["📋 Filtrim", "🔑 Aktiv et"]
+    ["📋 Filtrim", "🔑 Aktiv et"],
+    ["📊 Loglar"]
 ], resize_keyboard=True)
 
 FILTER_KEYBOARD = ReplyKeyboardMarkup([
@@ -59,6 +63,11 @@ PRICE_KEYBOARD = ReplyKeyboardMarkup([
 
 MILEAGE_KEYBOARD = ReplyKeyboardMarkup([
     ["🛣 Limitsiz", "🔙 Geri"]
+], resize_keyboard=True)
+
+LOG_KEYBOARD = ReplyKeyboardMarkup([
+    ["📤 Bildirişlər", "👤 İstifadəçi"],
+    ["🔙 Geri"]
 ], resize_keyboard=True)
 
 
@@ -239,6 +248,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=kb,
                 )
+                log.log_action(telegram_id, "/start (aktiv)")
                 return
         except (ValueError, TypeError):
             pass
@@ -248,6 +258,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Nömrəniz aktiv deyil. Adminlə əlaqə saxlayın.",
             reply_markup=MAIN_KEYBOARD,
         )
+        log.log_action(telegram_id, "/start (deaktiv)")
         return
 
     keyboard = ReplyKeyboardMarkup([
@@ -257,6 +268,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Proqramı istifadə etmək üçün nömrənizi paylaşın.",
         reply_markup=keyboard,
     )
+    log.log_action(telegram_id, "/start (yeni)")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -304,6 +316,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode="Markdown",
                         reply_markup=kb,
                     )
+                    log.log_action(telegram_id, "Nömrə paylaşdı (aktiv)")
                     return
             except (ValueError, TypeError):
                 pass
@@ -311,11 +324,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "❌ Müddət bitib. Adminlə əlaqə saxlayın.",
                 reply_markup=MAIN_KEYBOARD,
             )
+            log.log_action(telegram_id, "Nömrə paylaşdı (müddət bitib)")
         else:
             await update.message.reply_text(
                 "❌ Nömrəniz aktiv deyil. Adminlə əlaqə saxlayın.",
                 reply_markup=MAIN_KEYBOARD,
             )
+            log.log_action(telegram_id, "Nömrə paylaşdı (deaktiv)")
         return
 
     text = update.message.text.strip()
@@ -361,6 +376,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "❌ Kreditiniz bitib. Adminlə əlaqə saxlayın: @L33TeBoy",
                     reply_markup=get_main_keyboard(telegram_id),
                 )
+                log.log_action(telegram_id, f"Aktiv et (kredit yox): {phone}")
                 return
 
         db.activate_user(phone, days, telegram_id)
@@ -371,6 +387,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ {phone} aktiv edildi ({days} gün)",
             reply_markup=get_main_keyboard(telegram_id),
         )
+        log.log_action(telegram_id, f"Aktiv et: {phone} ({days} gün)")
         return
 
     # --- Режим ожидания минимальной цены ---
@@ -384,6 +401,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=PRICE_KEYBOARD,
             )
+            log.log_action(telegram_id, "Qiymət min: limitsiz")
             return
         elif text == "🔙 Geri":
             context.user_data["awaiting_price_from"] = False
@@ -393,6 +411,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=FILTER_KEYBOARD,
             )
+            log.log_action(telegram_id, "Qiymət min: geri")
             return
         else:
             try:
@@ -407,6 +426,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=PRICE_KEYBOARD,
                 )
+                log.log_action(telegram_id, f"Qiymət min: {price:,.0f} AZN")
                 return
             except ValueError:
                 await update.message.reply_text(
@@ -419,6 +439,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_price_to"):
         if text == "💰 Qiymətsiz":
             context.user_data["price_to"] = None
+            log.log_action(telegram_id, "Qiymət max: limitsiz")
         elif text == "🔙 Geri":
             context.user_data["awaiting_price_to"] = False
             f = get_user_filter(telegram_id)
@@ -427,6 +448,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=FILTER_KEYBOARD,
             )
+            log.log_action(telegram_id, "Qiymət max: geri")
             return
         else:
             try:
@@ -434,6 +456,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if price < 0 or price > 10_000_000:
                     raise ValueError
                 context.user_data["price_to"] = price
+                log.log_action(telegram_id, f"Qiymət max: {price:,.0f} AZN")
             except ValueError:
                 await update.message.reply_text(
                     "❌ Düzgün qiymət yazın. Məsələn: 50000",
@@ -485,6 +508,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=get_main_keyboard(telegram_id),
             )
+            log.log_action(telegram_id, "Yürüş: limitsiz")
             return
         elif text == "🔙 Geri":
             f = get_user_filter(telegram_id)
@@ -493,6 +517,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=FILTER_KEYBOARD,
             )
+            log.log_action(telegram_id, "Yürüş: geri")
             return
         else:
             try:
@@ -517,6 +542,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=get_main_keyboard(telegram_id),
                 )
+                log.log_action(telegram_id, f"Yürüş: {km:,} km")
                 return
             except ValueError:
                 await update.message.reply_text(
@@ -547,6 +573,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=get_main_keyboard(telegram_id),
             )
+            log.log_action(telegram_id, "Şəhər: Hamısı")
             return
         elif text == "🔙 Geri":
             f = get_user_filter(telegram_id)
@@ -555,6 +582,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=FILTER_KEYBOARD,
             )
+            log.log_action(telegram_id, "Şəhər: geri")
             return
         city = find_city(text)
         if city:
@@ -576,6 +604,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=get_main_keyboard(telegram_id),
             )
+            log.log_action(telegram_id, f"Şəhər: {city}")
         else:
             await update.message.reply_text(
                 "❌ Şəhəri anlaya bilmədim. Yenidən yaz.",
@@ -586,7 +615,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Режим поиска ---
     if context.user_data.get("awaiting_search"):
         context.user_data["awaiting_search"] = False
-        if text in {"🔙 Geri", "📋 Filtrim", "⚙️ Filtrlər", "🔍 Axtar", "🔑 Aktiv et"}:
+        if text in {"🔙 Geri", "📋 Filtrim", "⚙️ Filtrlər", "🔍 Axtar", "🔑 Aktiv et", "📊 Loglar"}:
             pass
         else:
             parsed = parse_search_query(text)
@@ -629,6 +658,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=ReplyKeyboardMarkup([["✅ Bəli", "✏️ Dəyiş"], ["🔙 Geri"]], resize_keyboard=True),
             )
+            log.log_action(telegram_id, f"Axtar: {text}")
             return
 
     # --- Навигация ---
@@ -640,6 +670,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=kb,
         )
+        log.log_action(telegram_id, "Aktiv et düyməsi")
         return
 
     if text == "🔍 Axtar":
@@ -648,6 +679,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
         context.user_data["awaiting_search"] = True
+        log.log_action(telegram_id, "Axtar düyməsi")
         return
 
     elif text == "⚙️ Filtrlər":
@@ -657,6 +689,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=FILTER_KEYBOARD,
         )
+        log.log_action(telegram_id, "Filtrlər düyməsi")
         return
 
     elif text == "📋 Filtrim":
@@ -666,6 +699,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=kb,
         )
+        log.log_action(telegram_id, "Filtrim düyməsi")
         return
 
     elif text == "📍 Şəhər":
@@ -675,6 +709,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=CITY_KEYBOARD,
         )
         context.user_data["awaiting_city"] = True
+        log.log_action(telegram_id, "Şəhər düyməsi")
         return
 
     elif text == "💸 Qiymət":
@@ -690,6 +725,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=PRICE_KEYBOARD,
         )
         context.user_data["awaiting_price_from"] = True
+        log.log_action(telegram_id, "Qiymət düyməsi")
         return
 
     elif text == "🛣 Yürüş":
@@ -703,6 +739,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=MILEAGE_KEYBOARD,
         )
         context.user_data["awaiting_mileage"] = True
+        log.log_action(telegram_id, "Yürüş düyməsi")
         return
 
     elif text == "🔄 Sıfırla":
@@ -722,6 +759,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=kb,
         )
+        log.log_action(telegram_id, "Sıfırla")
         return
 
     elif text == "🔙 Geri":
@@ -731,6 +769,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
             reply_markup=kb,
         )
+        log.log_action(telegram_id, "Geri")
         return
 
     elif text == "✅ Bəli":
@@ -758,11 +797,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=kb,
             )
+            log.log_action(telegram_id, "Bəli (filtr təsdiq)")
         return
 
     elif text == "✏️ Dəyiş":
         await update.message.reply_text("Yenidən yaz. Nümunə: `toyota prius 2018`", parse_mode="Markdown")
         context.user_data["awaiting_search"] = True
+        log.log_action(telegram_id, "Dəyiş")
+        return
+
+    # --- Логи (админ / партнёр) ---
+    elif text == "📊 Loglar" and is_admin_or_partner(telegram_id):
+        await update.message.reply_text(
+            "Hansı logu görmək istəyirsən?",
+            reply_markup=LOG_KEYBOARD,
+        )
+        log.log_action(telegram_id, "Loglar düyməsi")
+        return
+
+    elif text == "📤 Bildirişlər" and is_admin_or_partner(telegram_id):
+        lines = log.get_recent_notifications(20)
+        if lines:
+            await update.message.reply_text(
+                "📤 *Son 20 bildiriş:*\n\n```\n" + "".join(lines) + "```",
+                parse_mode="Markdown",
+                reply_markup=LOG_KEYBOARD,
+            )
+        else:
+            await update.message.reply_text(
+                "📤 Hələ bildiriş yoxdur.",
+                reply_markup=LOG_KEYBOARD,
+            )
+        log.log_action(telegram_id, "Bildiriş logları")
+        return
+
+    elif text == "👤 İstifadəçi" and is_admin_or_partner(telegram_id):
+        lines = log.get_recent_actions(20)
+        if lines:
+            await update.message.reply_text(
+                "👤 *Son 20 hərəkət:*\n\n```\n" + "".join(lines) + "```",
+                parse_mode="Markdown",
+                reply_markup=LOG_KEYBOARD,
+            )
+        else:
+            await update.message.reply_text(
+                "👤 Hələ hərəkət yoxdur.",
+                reply_markup=LOG_KEYBOARD,
+            )
+        log.log_action(telegram_id, "İstifadəçi logları")
         return
 
     await update.message.reply_text(

@@ -6,8 +6,10 @@ from telegram.ext import ContextTypes
 from car_tracker.db import Database
 from bot.card import format_car_card
 from bot.config import FREQUENCY_DISCOUNT, FREQUENCY_DAYS
+from bot.logger import NotificationLogger
 
 db = Database()
+log = NotificationLogger()
 
 last_check = datetime.now()
 
@@ -156,8 +158,11 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=keyboard,
                         parse_mode="Markdown",
                     )
+                
+                # Логируем отправку
+                log.log_sent(f["telegram_id"], car, discount)
+                
                 print(f"📤 Bildiriş göndərildi: {f['telegram_id']} → {car['brand']} {car['model']}")
-
                 db.mark_as_sent(f["telegram_id"], car["external_id"])
             except Exception as e:
                 print(f"❌ Göndərmə xətası {f['telegram_id']}: {e}")
