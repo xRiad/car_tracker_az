@@ -49,11 +49,9 @@ FILTER_KEYBOARD = ReplyKeyboardMarkup([
     ["🔄 Sıfırla", "🔙 Geri"]
 ], resize_keyboard=True)
 
-# Закомментировано — может пригодиться в будущем
-# DISCOUNT_KEYBOARD = ReplyKeyboardMarkup([
-#     ["14%", "20%"],
-#     ["🔙 Geri"]
-# ], resize_keyboard=True)
+CITY_KEYBOARD = ReplyKeyboardMarkup([
+    ["🌍 Hamısı", "🔙 Geri"]
+], resize_keyboard=True)
 
 PRICE_KEYBOARD = ReplyKeyboardMarkup([
     ["💰 Qiymətsiz", "🔙 Geri"]
@@ -163,7 +161,7 @@ def format_filter_text(f: dict) -> str:
         to_str = f"{price_to:,.0f}" if price_to else "∞"
         lines.append(f"💸 *{from_str}-dən {to_str}-dək AZN*")
 
-    lines.append(f"📍 *{f.get('city') or 'Bakı'}*")
+    lines.append(f"📍 *{f.get('city') or 'Hamısı'}*")
 
     mi_from = f.get("mileage_from")
     mi_to = f.get("mileage_to")
@@ -530,7 +528,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- Режим ожидания города ---
     if context.user_data.get("awaiting_city"):
         context.user_data["awaiting_city"] = False
-        if text == "🔙 Geri":
+        if text == "🌍 Hamısı":
+            f = get_user_filter(telegram_id)
+            db.save_filter(
+                telegram_id=telegram_id,
+                brand=f.get("brand"), model=f.get("model"),
+                engine_volume=f.get("engine_volume"),
+                year_from=f.get("year_from"), year_to=f.get("year_to"),
+                price_from=f.get("price_from"), price_to=f.get("price_to"),
+                min_discount=f.get("min_discount", 10),
+                city=None,
+                mileage_from=f.get("mileage_from"),
+                mileage_to=f.get("mileage_to", 250000),
+            )
+            f = get_user_filter(telegram_id)
+            await update.message.reply_text(
+                "✅ Şəhər: *Hamısı*\n\n" + format_filter_text(f),
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard(telegram_id),
+            )
+            return
+        elif text == "🔙 Geri":
             f = get_user_filter(telegram_id)
             await update.message.reply_text(
                 format_filter_text(f) + "\n\nNəyi dəyişmək istəyirsən?",
@@ -561,7 +579,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(
                 "❌ Şəhəri anlaya bilmədim. Yenidən yaz.",
-                reply_markup=get_main_keyboard(telegram_id),
+                reply_markup=CITY_KEYBOARD,
             )
         return
 
@@ -654,6 +672,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Şəhəri yazın.\nMəsələn: Bakı, Gəncə, Sumqayıt, Naxçıvan...",
             parse_mode="Markdown",
+            reply_markup=CITY_KEYBOARD,
         )
         context.user_data["awaiting_city"] = True
         return
