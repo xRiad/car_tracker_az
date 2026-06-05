@@ -213,6 +213,37 @@ class Database:
         )
         return cursor.rowcount
     
+    def find_similar_car(self, brand: str, model: str, year: int,
+                         price: float, city: str, mileage: int = None,
+                         engine_volume: float = None, current_id: str = None,
+                         days: int = 3) -> bool:
+        """Проверяет, была ли похожая машина за последние N дней."""
+        query = """SELECT 1 FROM cars 
+                   WHERE brand = ? 
+                   AND model = ? 
+                   AND year = ?
+                   AND price = ?
+                   AND city = ?
+                   AND scraped_at >= datetime('now', ?)"""
+        params = [brand, model, year, price, city, f"-{days} days"]
+        
+        if current_id:
+            query += " AND external_id != ?"
+            params.append(current_id)
+        
+        if mileage is not None:
+            query += " AND mileage = ?"
+            params.append(mileage)
+        
+        if engine_volume is not None:
+            query += " AND engine_volume = ?"
+            params.append(engine_volume)
+        
+        query += " LIMIT 1"
+        
+        cursor = self.conn.execute(query, params)
+        return cursor.fetchone() is not None
+    
     # ============ FREQUENCY ============
     
     def get_daily_frequency(self, brand: str, model: str, year: int,

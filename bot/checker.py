@@ -124,6 +124,20 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
             if db.is_already_sent(f["telegram_id"], car["external_id"]):
                 continue
             
+            # Проверка на дубликат (перезалив объявления)
+            if db.find_similar_car(
+                brand=car["brand"],
+                model=car["model"],
+                year=car["year"],
+                price=car["price"],
+                city=car.get("city", ""),
+                mileage=car.get("mileage"),
+                engine_volume=car.get("engine_volume"),
+                current_id=car["external_id"]
+            ):
+                print(f"🔄 Dublikat keçildi: {car['brand']} {car['model']} ({car['year']}) - {car['price']} AZN")
+                continue
+            
             try:
                 text, keyboard = format_car_card(car, market, discount)
                 
