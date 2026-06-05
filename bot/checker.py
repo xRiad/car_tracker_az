@@ -51,7 +51,6 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
             db.mark_as_sent(user["telegram_id"], expiry_key)
-            print(f"⏰ Xəbərdarlıq göndərildi: {user['telegram_id']}")
         except Exception as e:
             print(f"❌ Xəbərdarlıq xətası {user['telegram_id']}: {e}")
 
@@ -92,7 +91,6 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
         if not market:
             continue
         
-        # Минимум 8 машин для надёжной статистики
         if market.get("total_listings", 0) < 8:
             continue
 
@@ -102,14 +100,17 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
         
         discount = (median - car["price"]) / median * 100
         
-        # Динамический порог скидки на основе частоты модели
-        model_min_discount = get_min_discount_for_model(
+        # Только динамический порог из конфига
+        effective_min = get_min_discount_for_model(
             brand=car["brand"],
             model=car["model"],
             year=car["year"],
             engine_volume=car.get("engine_volume") or 0,
             fuel_type=car.get("fuel_type") or "",
         )
+        
+        if discount < effective_min:
+            continue
         
         for f in filters:
             user = db.get_user_by_telegram(f["telegram_id"])
@@ -119,12 +120,6 @@ async def check_new_deals(context: ContextTypes.DEFAULT_TYPE):
                 expires = datetime.fromisoformat(user["expires_at"])
                 if expires <= now:
                     continue
-            
-            user_min_disc = f.get("min_discount", 10)
-            effective_min = max(user_min_disc, model_min_discount) if model_min_discount > 0 else user_min_disc
-            
-            if discount < effective_min:
-                continue
             
             if db.is_already_sent(f["telegram_id"], car["external_id"]):
                 continue

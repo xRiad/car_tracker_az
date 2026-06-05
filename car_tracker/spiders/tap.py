@@ -207,6 +207,11 @@ class TapSpider(scrapy.Spider):
         else:
             item["price"] = 0.0
             item["currency"] = "AZN"
+
+        # Не сохраняем машины дешевле 1000 AZN
+        if item["price"] < 800:
+            self.logger.debug(f"⏭️ Пропущена (цена < 800): {item.get('external_id')}")
+            return
         
         # Главное фото
         main_photo = response.css("meta[property='og:image']::attr(content)").get()

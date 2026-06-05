@@ -50,7 +50,7 @@ class TurboSpider(scrapy.Spider):
         "q%5Bonly_shops%5D=0&"
         "q%5Bprior_owners_count%5D%5B%5D=&q%5Bseats_count%5D%5B%5D=&"
         "q%5Bmarket%5D%5B%5D=&"
-        "q%5Bcrashed%5D=1&q%5Bpainted%5D=1&"
+        "q%5Bcrashed%5D=0&q%5Bpainted%5D=1&"
         "q%5Bfor_spare_parts%5D=0&"
         "q%5Bavailability_status%5D="
     )
@@ -292,6 +292,11 @@ class TurboSpider(scrapy.Spider):
         else:
             item["price"] = 0.0
             item["currency"] = "AZN"
+
+        # Не сохраняем машины дешевле 1000 AZN
+        if item["price"] < 800:
+            self.logger.debug(f"⏭️ Пропущена (цена < 800): {item.get('external_id')}")
+            return
 
         required_fields = ["brand", "model", "year", "price"]
 
