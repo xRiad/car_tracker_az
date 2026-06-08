@@ -11,12 +11,14 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from car_tracker.db import Database
 from bot.handlers import start, set_filter, my_filter, stop_filter, handle_message
 from bot.checker import check_new_deals
+from dotenv import load_dotenv
+load_dotenv()
 
 db = Database()
 
 def main():
     """Запуск бота."""
-    TOKEN = os.getenv("BOT_TOKEN", "8983260451:AAEeYDg4SnvqDFW9Vzdix7ibOMhB_WQZf04")
+    TOKEN = os.getenv("BOT_TOKEN")
     
     app = Application.builder().token(TOKEN).build()
     
